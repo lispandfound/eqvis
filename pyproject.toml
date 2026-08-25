@@ -7,7 +7,7 @@ name = "eqvis-workflow"
 version = "0.1.0"
 description = "Figures for earthquake simulation workflows: intensity measure maps, attenuation and bias plots, spectra, waveforms, rupture maps and wavefield animations."
 readme = "README.md"
-requires-python = ">=3.14"
+requires-python = ">=3.13"
 authors = [{ name = "Jake Faulkner", email = "jake.faulkner@canterbury.ac.nz" }]
 dependencies = [
     "duckdb",
