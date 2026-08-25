@@ -33,6 +33,8 @@ The rule is recorded per station in ``run_stations.is_observation_site`` rather
 than left as folklore.
 """
 
+from __future__ import annotations
+
 import json
 import os
 import re
@@ -369,8 +371,9 @@ def convert_run(
     site = {"station": pa.array(station)}
     for term in SITE_TERMS:
         site[term] = float_array(
-            anchor[term].values.astype(np.float32) if term in anchor.coords else
-            np.full(n_stations, np.nan, dtype=np.float32)
+            anchor[term].values.astype(np.float32)
+            if term in anchor.coords
+            else np.full(n_stations, np.nan, dtype=np.float32)
         )
     pq.write_table(pa.table(site), out / "stations.parquet")
     rows["stations"] = n_stations
@@ -382,14 +385,16 @@ def convert_run(
     for axis in ("x", "y"):
         # EMOD3D carries the grid indices it sampled at; SW4 does not.
         geometry[axis] = pa.array(
-            anchor[axis].values.astype(np.int32) if axis in anchor.coords else
-            np.full(n_stations, None, dtype=object),
+            anchor[axis].values.astype(np.int32)
+            if axis in anchor.coords
+            else np.full(n_stations, None, dtype=object),
             type=pa.int32(),
         )
     for term in RUN_GEOMETRY:
         geometry[term] = float_array(
-            anchor[term].values.astype(np.float64) if term in anchor.coords else
-            np.full(n_stations, np.nan),
+            anchor[term].values.astype(np.float64)
+            if term in anchor.coords
+            else np.full(n_stations, np.nan),
             pa.float64(),
         )
     geometry["is_observation_site"] = pa.array(is_site)
@@ -563,8 +568,7 @@ def stage(
     selected = selected_runs(runs, only)
     if only and not selected:
         console_warn(
-            "--only selected none of the discovered runs; nothing will be "
-            "converted"
+            "--only selected none of the discovered runs; nothing will be converted"
         )
     stale = []
     for run in runs:
