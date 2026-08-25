@@ -37,6 +37,8 @@ Hz, and no value is shared exactly. Both grids are stored, tagged in
 -- it is interpolation, not SQL.
 """
 
+from __future__ import annotations
+
 from collections.abc import Iterable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -615,10 +617,12 @@ def add_observed(
         f"""
         INSERT INTO scalars
         SELECT m.run_id, o.station, ?,
-               {", ".join(
-                   f"CAST(o.{source} AS FLOAT)" if source else "CAST(NULL AS FLOAT)"
-                   for source in observed_scalars(columns).values()
-               )}
+               {
+            ", ".join(
+                f"CAST(o.{source} AS FLOAT)" if source else "CAST(NULL AS FLOAT)"
+                for source in observed_scalars(columns).values()
+            )
+        }
         FROM {RECORDINGS} o JOIN obs_map m USING (event)
         """,
         [component],
@@ -682,7 +686,11 @@ def add_axes(con, with_fas: bool) -> None:
 
 
 def add_units_and_notes(
-    con, observed_dir: Path | None, component: str | None, with_fas: bool, extract: str = ""
+    con,
+    observed_dir: Path | None,
+    component: str | None,
+    with_fas: bool,
+    extract: str = "",
 ) -> None:
     """Record the units, and the things a reader has to know but cannot see."""
     con.executemany("INSERT INTO im_units VALUES (?, ?)", list(IM_UNITS.items()))
