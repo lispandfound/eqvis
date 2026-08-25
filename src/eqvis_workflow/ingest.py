@@ -356,12 +356,16 @@ def convert_run(
     pq.write_table(pa.table({k: [v] for k, v in run_row.items()}), out / "run.parquet")
     # The dimensions the regex named, as rows rather than columns, so a tree
     # organised along different axes needs no schema change.
+    # Types are pinned so a run with no labels still writes string columns:
+    # an empty pa.array() has null type, and DuckDB reads a null-typed parquet
+    # column as INTEGER, which breaks the run_key join against the string keys
+    # in every other run's file.
     pq.write_table(
         pa.table(
             {
-                "run_key": pa.array([run.key] * len(run.labels)),
-                "name": pa.array([name for name, _ in run.labels]),
-                "value": pa.array([value for _, value in run.labels]),
+                "run_key": pa.array([run.key] * len(run.labels), type=pa.string()),
+                "name": pa.array([name for name, _ in run.labels], type=pa.string()),
+                "value": pa.array([value for _, value in run.labels], type=pa.string()),
             }
         ),
         out / "run_labels.parquet",
