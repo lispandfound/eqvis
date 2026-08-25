@@ -5,6 +5,8 @@ read from, and the default -- its natural height, at arm's length -- is only
 one of the answers. :class:`Display` is the other answers.
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 
 from .console import console_warn
