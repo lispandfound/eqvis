@@ -379,10 +379,8 @@ def read_residuals(
 ) -> dict[str, np.ndarray]:
     """The long-form residual table: one row per (run, station, ordinate).
 
-    ``ln(sim / obs)``, the repo's sign rather than the literature's, so a
-    **positive residual is the simulation over-predicting**. Lee et al. (2022)
-    define it the other way round, which inverts every "over-" and
-    "under-prediction" sentence in that paper against this column.
+    ``ln(obs / sim)``, the literature's sign (Lee et al. 2022), so a
+    **positive residual is the simulation under-predicting**.
     :func:`eqvis_workflow.data.residual_label` renders the axis for it, and this
     is the one place the direction is decided.
 
@@ -438,7 +436,7 @@ def read_residuals(
     rows = con.execute(
         f"""
         SELECT r.run_key, r.event, p.station{ordinate},
-               ln(p.{value} / o.{value}) AS residual
+               ln(o.{value} / p.{value}) AS residual
                {label_columns(names)}{extra}
         FROM {table} p
         JOIN runs r ON r.run_id = p.run_id

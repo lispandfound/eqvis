@@ -3,7 +3,7 @@
 The residual against the recordings, split into what is systematic to an
 earthquake, what is systematic to a site, and what is left::
 
-    ln(sim/obs) = a + dB_e + dS2S_s + dW_es
+    ln(obs/sim) = a + dB_e + dS2S_s + dW_es
 
 after Lee et al. (2022), whose notation is Al Atik et al. (2010) and whose
 estimation follows Stafford (2014). One independent fit per period, per cell of

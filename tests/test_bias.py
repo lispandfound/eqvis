@@ -13,7 +13,13 @@ Every function tested here is pure, so none of it needs a file or a figure.
 import numpy as np
 import pytest
 
-from eqvis_workflow.bias import bias_statistics, interval_half_width, match_columns
+from eqvis_workflow.bias import (
+    bias_statistics,
+    draw_bias_curve,
+    interval_half_width,
+    match_columns,
+    model_residual,
+)
 
 
 class TestBiasStatistics:
@@ -117,6 +123,25 @@ class TestInterval:
         assert np.isnan(interval_half_width(stats, 0.95)).all()
 
 
+class TestBiasBand:
+    def test_the_band_is_one_sigma_of_the_sample_not_an_interval_on_the_mean(self):
+        """Thirty stations pin the mean down far more tightly than they scatter;
+        the band is the scatter."""
+        import matplotlib
+
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+
+        rng = np.random.default_rng(0)
+        stats = bias_statistics(rng.normal(0.3, 0.6, size=(30, 2)))
+        fig, ax = plt.subplots()
+        draw_bias_curve(ax, np.array([0.1, 1.0]), stats, "black", "-")
+        band = ax.collections[0].get_paths()[0].vertices[:, 1]
+        plt.close(fig)
+        assert band.max() == pytest.approx((stats["mean"] + stats["sd"]).max())
+        assert band.min() == pytest.approx((stats["mean"] - stats["sd"]).min())
+
+
 class TestMatchColumns:
     """Lining a recording's period grid up with the run's, or refusing to."""
 
@@ -145,3 +170,43 @@ class TestMatchColumns:
         values = np.array([[1.0]])
         assert np.isnan(match_columns(values, np.array([0.1]), np.array([0.11])))
         assert not np.isnan(match_columns(values, np.array([5.0]), np.array([5.1])))
+
+
+class TestModelResidual:
+    """Which way round the panel's curves go -- the one thing it asserts.
+
+    The axis is ``ln(obs/sim)``, so every series on it, simulation or empirical
+    model, has to be recording-minus-prediction. The empirical branch was once
+    scored the other way round from the simulations, which drew the model upside
+    down: a model under-predicting by a factor of 1.4 appeared as one
+    over-predicting by 1.4, and the comparison the panel exists to support came
+    out backwards.
+    """
+
+    def test_a_prediction_running_low_is_positive(self):
+        predicted, recorded = np.log([1.0]), np.log([2.0])
+        assert model_residual(predicted, recorded) == pytest.approx([np.log(2.0)])
+
+    def test_a_prediction_running_high_is_negative(self):
+        predicted, recorded = np.log([2.0]), np.log([1.0])
+        assert model_residual(predicted, recorded) == pytest.approx([-np.log(2.0)])
+
+    def test_an_empirical_model_is_scored_the_same_way_round_as_a_simulation(self):
+        """Both are predictions; the panel cannot mix conventions between them."""
+        recorded = np.log(np.array([[1.0, 4.0]]))
+        high = np.log(np.array([[2.0, 8.0]]))
+        assert model_residual(high, recorded) == pytest.approx(
+            model_residual(high, recorded)
+        )
+        # A model and a simulation that predict the same thing score the same.
+        simulated, empirical = high, high.copy()
+        assert bias_statistics(model_residual(simulated, recorded))[
+            "mean"
+        ] == pytest.approx(bias_statistics(model_residual(empirical, recorded))["mean"])
+
+    def test_reversing_the_arguments_reverses_the_curve(self):
+        """The exact mistake, stated: the two orderings are not interchangeable."""
+        predicted, recorded = np.log([[3.0]]), np.log([[1.0]])
+        assert model_residual(predicted, recorded) == pytest.approx(
+            -model_residual(recorded, predicted)
+        )

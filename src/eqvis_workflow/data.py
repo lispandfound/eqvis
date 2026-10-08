@@ -145,14 +145,15 @@ def im_label(im: str, selection: dict[str, float]) -> str:
 
 
 def residual_label(name: str) -> str:
-    """Axis label for the misfit against the recordings: ln(sim / obs).
+    """Axis label for the misfit against the recordings: ln(obs / sim).
 
-    Simulation over observation, so a positive residual is the simulation
-    running high -- the direction to read when the simulation is the subject.
+    Observation over simulation, so a positive residual is the simulation
+    running low (under-predicting) and a negative one the simulation running
+    high.
     One function, so the convention is written once and the map's colour bar,
     the distance panels and the bias sweep cannot drift apart.
     """
-    return f"ln[{name}$_{{sim}}$ / {name}$_{{obs}}$]"
+    return f"ln[{name}$_{{obs}}$ / {name}$_{{sim}}$]"
 
 
 def default_title(attrs: dict, runs: str) -> str:

@@ -13,11 +13,9 @@ sequence of residual manipulations, because an unbalanced design makes the
 sequential estimates of the later components biased. Note that the acronym
 "MERA" appears in none of those three papers.
 
-**Sign.** The response this is given is ``ln(simulated) - ln(observed)``, the
+**Sign.** The response this is given is ``ln(observed) - ln(simulated)``, the
 convention of :func:`eqvis_workflow.data.residual_label`, so a **positive value
-means the simulation over-predicts**. Lee et al. define the residual the other
-way up, which inverts every "over-" and "under-prediction" sentence in that
-paper against anything computed here. Read the three papers with that in mind.
+means the simulation under-predicts** -- the same way up as Lee et al.
 
 Two implementation choices are worth stating, because both are places a
 hand-rolled variance-component fit is usually silently wrong.
@@ -264,7 +262,7 @@ class MixedFit:
         the between-event standard deviation over the square root of eight,
         whatever the row count. Taking ``n - p`` would make every interval far
         too narrow. Same argument
-        :func:`eqvis_workflow.bias.draw_bias_curve` makes for Student's t over
+        :func:`eqvis_workflow.bias.interval_half_width` makes for Student's t over
         the normal, one level up.
         """
         smallest = min(

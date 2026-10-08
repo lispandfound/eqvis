@@ -31,7 +31,7 @@ FLATFILE_TABLE_PATTERN = re.compile(
 )
 
 
-FLATFILE_SCALAR_IMS = {"PGA", "PGV", "PGD"}
+FLATFILE_SCALAR_IMS = {"PGA", "PGV", "PGD", "CAV", "AI", "Ds575", "Ds595"}
 
 
 def flatfile_member(zf: zipfile.ZipFile, component: str, archive: Path) -> str:

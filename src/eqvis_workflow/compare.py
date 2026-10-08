@@ -9,8 +9,8 @@ no change here::
     eqvis compare ims.duckdb --group-by solver --baseline solver=emod3d
     eqvis compare ims.duckdb --group-by mesh --baseline mesh=coarse
 
-The panel below the curves is the point. The cells' own intervals overlap almost
-everywhere, because most of that width is site scatter common to all of them;
+The panel below the curves is the point. The cells' own +/-1 sigma bands overlap
+almost everywhere, because most of that width is site scatter common to all of them;
 only differencing them cell by cell against a baseline cancels it. And because
 every configuration of an event is scored at the same stations, that pairing is
 exact here in a way it cannot be for two separate files: the recording cancels
@@ -130,7 +130,12 @@ def compare(
         ),
     ] = True,
     interval: Annotated[
-        float, typer.Option("--interval", help="Confidence level for the bands")
+        float,
+        typer.Option(
+            "--interval",
+            help="Confidence level for the paired-difference bands; the bias "
+            "bands are always +/-1 sigma",
+        ),
     ] = 0.95,
     minimum: Annotated[
         int,
@@ -259,7 +264,7 @@ def compare(
             ax.errorbar(
                 [entry["name"]],
                 entry["stats"]["mean"],
-                yerr=entry["stats"]["se"] * 1.96,
+                yerr=entry["stats"]["sd"],
                 fmt="o",
                 color=entry["colour"],
                 capsize=3,
@@ -271,7 +276,6 @@ def compare(
                 entry["stats"],
                 entry["colour"],
                 "-",
-                interval,
                 display,
             )
     ax.axhline(0, color="#6b6b6b", lw=display.mark(0.8), zorder=1)

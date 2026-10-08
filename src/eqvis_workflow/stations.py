@@ -251,18 +251,62 @@ def _overlaps(a: tuple, b: tuple, pad: float = 1.0) -> bool:
     )
 
 
-def place_labels(fig: plt.Figure, ax: plt.Axes, entries: list[dict]) -> None:
+def _inside(box: tuple, frame: tuple) -> bool:
+    """Whether ``box`` sits wholly within ``frame``, both in pixels."""
+    return (
+        box[0] >= frame[0]
+        and box[1] >= frame[1]
+        and box[2] <= frame[2]
+        and box[3] <= frame[3]
+    )
+
+
+def _nudge_inside(box: tuple, frame: tuple) -> tuple[float, float]:
+    """The pixel shift that brings ``box`` inside ``frame``, as far as it fits.
+
+    A label whose anchor is near the frame has no offset that clears it -- every
+    direction either overlaps a neighbour or hangs over the edge -- so the last
+    word is a shift rather than another candidate position. Overflow on both
+    sides means the label is wider than the frame, and the left/bottom edge is
+    the one worth keeping.
+    """
+    shift = []
+    for low, high, frame_low, frame_high in (
+        (box[0], box[2], frame[0], frame[2]),
+        (box[1], box[3], frame[1], frame[3]),
+    ):
+        over = min(frame_high - high, 0.0)
+        under = max(frame_low - low, 0.0)
+        shift.append(under if under else over)
+    return shift[0], shift[1]
+
+
+def place_labels(
+    fig: plt.Figure,
+    ax: plt.Axes,
+    entries: list[dict],
+    avoid: list | None = None,
+) -> None:
     """Lay out labels so none overlap another label or an anchor point.
 
     Each entry is ``{"text", "x", "y", "colour", "rank"}``, optionally with
     ``size``, ``style`` and ``weight``. Labels are placed
     greedily -- lowest ``rank`` first, then least crowded -- each taking the
     first offset in ``LABEL_OFFSETS`` whose box clears every anchor and every
-    label already placed, so a lower rank claims the space it wants and later
-    ones work around it. Anything pushed past the inner ring gets a leader line
-    back to its anchor. Placement happens in pixels, so the figure is laid out
-    once first to settle the axes size, and works against whatever the axes are
-    showing -- lon/lat on the map, distance/IM on the scatter.
+    label already placed *and* stays inside the axes, so a lower rank claims the
+    space it wants and later ones work around it. A label with no such offset
+    takes the best clear one and is nudged back inside the frame: hanging over
+    the edge puts it in the margin or the title, where it reads as belonging to
+    the figure rather than to its anchor. Anything pushed past the inner ring
+    gets a leader line back to its anchor. Placement happens in pixels, so the
+    figure is laid out once first to settle the axes size, and works against
+    whatever the axes are showing -- lon/lat on the map, distance/IM on the
+    scatter.
+
+    ``avoid`` is any further artists the labels must keep off -- a legend, a
+    locator inset -- given as objects with a ``get_window_extent``. They are
+    obstacles rather than anchors: nothing is labelled at them, but a name
+    under an opaque legend box is not a name anyone reads.
     """
     if not entries:
         return
@@ -306,15 +350,34 @@ def place_labels(fig: plt.Figure, ax: plt.Axes, entries: list[dict]) -> None:
 
     # Anchors are obstacles too, so labels never land on a neighbouring marker.
     occupied = [(x - 6, y - 6, x + 6, y + 6) for x, y in xy]
+    for artist in avoid or []:
+        occupied.append(tuple(artist.get_window_extent(renderer).extents))
     crowding = cKDTree(xy).query_ball_point(xy, r=60, return_length=True)
     ranks = np.array([entry.get("rank", 0) for entry in entries])
 
+    frame = tuple(ax.get_window_extent(renderer).extents)
     for index in np.lexsort((crowding, ranks)):
         (x, y), (width, height) = xy[index], sizes[index]
+        clear = None
         for dx, dy, ha, va in LABEL_OFFSETS:
             box = _label_box(x + dx * scale, y + dy * scale, width, height, ha, va)
-            if not any(_overlaps(box, other) for other in occupied):
+            if any(_overlaps(box, other) for other in occupied):
+                continue
+            clear = clear or (dx, dy, ha, va, box)
+            if _inside(box, frame):
                 break
+        else:
+            # Nothing both clear and inside: take the first merely-clear
+            # position if there was one, else the first position at all, and
+            # let the nudge below deal with the frame.
+            if clear is None:
+                dx, dy, ha, va = LABEL_OFFSETS[0]
+                box = _label_box(x + dx * scale, y + dy * scale, width, height, ha, va)
+            else:
+                dx, dy, ha, va, box = clear
+        shift_x, shift_y = _nudge_inside(box, frame)
+        dx, dy = dx + shift_x / scale, dy + shift_y / scale
+        box = (box[0] + shift_x, box[1] + shift_y, box[2] + shift_x, box[3] + shift_y)
         texts[index].set_position((dx, dy))
         texts[index].set_ha(ha)
         texts[index].set_va(va)

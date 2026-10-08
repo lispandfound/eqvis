@@ -51,7 +51,13 @@ from .geography import (
     load_coastline,
 )
 from .picks import named_mask, pick_states, read_pick_list, restrict_to_stations
-from .raster import discrete_norm, fixed_symmetric_norm, rasterise, symmetric_norm
+from .raster import (
+    discrete_norm,
+    fixed_symmetric_norm,
+    label_ratios,
+    rasterise,
+    symmetric_norm,
+)
 from .stations import (
     cluster_bounds,
     draw_observed,
@@ -359,7 +365,7 @@ def map_im(
         named = named_mask(obs["name"], None if picked is None else picked["stations"])
         if np.isfinite(obs["value"]).any():
             simulated = sample_simulation(lon, lat, da.values, obs["lon"], obs["lat"])
-            residual = np.log(simulated) - np.log(obs["value"])
+            residual = np.log(obs["value"]) - np.log(simulated)
 
     view = (grid_lon.min(), grid_lat.min(), grid_lon.max(), grid_lat.max())
     domain_shape = (
@@ -444,6 +450,7 @@ def map_im(
         )
         residuals.set_ticks(shown)
         residuals.set_ticklabels([f"{b:g}" for b in shown], fontsize=8)
+        label_ratios(residuals, fontsize=7)
 
     colorbar = fig.colorbar(
         mesh,
@@ -457,6 +464,8 @@ def map_im(
     shown = display.keep(boundaries, max(3, display.ticks(len(boundaries))))
     colorbar.set_ticks(shown)
     colorbar.set_ticklabels([f"{b:g}" for b in shown], fontsize=8)
+    if diff is not None:
+        label_ratios(colorbar, fontsize=7)
 
     # Last, so labels are placed against the final axes size. Stations and
     # basins are laid out together, so they cannot land on top of each other.

@@ -14,7 +14,7 @@ from eqvis_workflow.animation import get_nice_vmax
 from eqvis_workflow.display import Display
 from eqvis_workflow.geography import nice_scale_length
 from eqvis_workflow.picks import read_pick_list, write_pick_list
-from eqvis_workflow.raster import fixed_symmetric_norm
+from eqvis_workflow.raster import RATIO_GAP, fixed_symmetric_norm, ratio_ticks
 from eqvis_workflow.stations import corner_anchor
 
 
@@ -151,6 +151,28 @@ class TestNorms:
     def test_levels_are_evenly_spaced(self):
         levels = fixed_symmetric_norm(0.75, 6)
         assert np.allclose(np.diff(levels), np.diff(levels)[0])
+
+
+class TestRatioTicks:
+    def test_a_residual_scale_reads_as_round_factors(self):
+        """+/-ln 2 is "half to double", and says so at both ends."""
+        _, labels = ratio_ticks(-0.7, 0.7)
+        assert labels[0] == "0.5×"
+        assert labels[-1] == "2×"
+        assert "1×" in labels
+
+    def test_ticks_sit_at_the_log_of_their_factor(self):
+        positions, labels = ratio_ticks(-1.5, 1.5)
+        for x, label in zip(positions, labels):
+            assert np.exp(x) == pytest.approx(float(label[:-1]), rel=0.02)
+
+    @pytest.mark.parametrize("limit", [0.3, 0.7, 1.0, 1.5, 2.0, 4.0, 8.0])
+    def test_labels_never_crowd(self, limit):
+        positions, _ = ratio_ticks(-limit, limit)
+        assert np.diff(positions).min() >= RATIO_GAP * 2 * limit
+
+    def test_a_scale_too_narrow_for_factors_gets_none(self):
+        assert ratio_ticks(-0.05, 0.05) is None
 
 
 class TestNiceVmax:

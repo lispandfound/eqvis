@@ -112,3 +112,55 @@ def fixed_symmetric_norm(limit: float, n_levels: int) -> np.ndarray:
     bins = round(limit / step)
     # Rounded, so the zero level is exactly zero rather than float dust.
     return np.round(step * np.arange(-bins, bins + 1), 12)
+
+
+
+# Round factors to mark a log-ratio scale with, finest first; each also marks
+# its reciprocal. The finest whose labels keep RATIO_GAP apart wins.
+RATIO_FACTORS = (
+    (1.1, 1.2, 1.5, 2, 3, 5, 10, 20, 50, 100, 200, 500, 1000),
+    (1.2, 1.5, 2, 3, 5, 10, 20, 50, 100, 200, 500, 1000),
+    (1.5, 2, 3, 5, 10, 20, 50, 100, 200, 500, 1000),
+    (2, 5, 10, 20, 50, 100, 200, 500, 1000),
+    (2, 10, 100, 1000),
+    (10, 100, 1000),
+)
+# Closest two factor labels may sit, as a fraction of the bar's width. Round
+# factors crowd towards 1x, so spacing rather than a count is what collides.
+RATIO_GAP = 0.08
+
+
+def ratio_ticks(lo: float, hi: float) -> tuple[list[float], list[str]] | None:
+    """Where round factors -- ``0.5×``, ``1×``, ``2×`` -- sit on a log-ratio scale.
+
+    Positions are the logs of the factors, so they fall between the bar's own
+    ticks rather than on them: ``1.2×`` is worth more to a reader than the
+    ``1.105×`` that ``ln = 0.1`` would have been. ``None`` when the scale is
+    too narrow for even ``1.1×`` to appear on both sides.
+    """
+    # Slack, so a scale ending on ln 2 rounded to 0.69 still shows its 2×.
+    slack = 5e-3
+    for factors in RATIO_FACTORS:
+        ratios = [1.0] + [r for f in factors for r in (f, 1 / f)]
+        ratios = sorted(r for r in ratios if lo - slack <= np.log(r) <= hi + slack)
+        if np.diff(np.log(ratios)).min(initial=np.inf) >= RATIO_GAP * (hi - lo):
+            break
+    if len(ratios) < 3:
+        return None
+    positions = [float(np.log(r)) for r in ratios]
+    return positions, [f"{float(f'{r:.2g}'):g}×" for r in ratios]
+
+
+def label_ratios(colorbar, fontsize: float) -> None:
+    """Mark a horizontal log-ratio colour bar with the factors it spans, on top.
+
+    The bar keeps its log ticks and label underneath -- that is the scale the
+    colours are linear in -- and gains the factors over it, so ``-0.69`` can
+    be read as "half" without reaching for a calculator.
+    """
+    found = ratio_ticks(colorbar.norm.vmin, colorbar.norm.vmax)
+    if found is None:
+        return
+    top = colorbar.ax.secondary_xaxis("top")
+    top.set_xticks(*found, fontsize=fontsize)
+    top.tick_params(length=2, pad=1)

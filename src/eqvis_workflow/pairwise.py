@@ -9,7 +9,7 @@ of numbers separates them::
     eqvis pairwise ims.duckdb --group-by mesh --period 2 --period 5
 
 On the **diagonal** is each configuration's own mean residual against the
-recordings: red over-predicts, blue under-predicts. **Below the diagonal**, the
+recordings, ln(obs/sim): red under-predicts, blue over-predicts. **Below the diagonal**, the
 cell at row *A* and column *B* is
 
     mean ln(B / A)
@@ -39,6 +39,7 @@ from . import store
 from .console import console_warn
 from .constants import DEFAULT_COMPONENT
 from .data import residual_label
+from .raster import label_ratios
 
 # Periods away from the hybrid crossover, where the low-frequency solution the
 # solvers actually differ over dominates the response. Near 1 s the blend with
@@ -264,6 +265,7 @@ def pairwise(
     )
     diagonal.set_label(f"diagonal: {residual_label(im)}", fontsize=8)
     diagonal.ax.tick_params(labelsize=7)
+    label_ratios(diagonal, fontsize=6)
     offset = fig.colorbar(
         plt.cm.ScalarMappable(toward_norm, cmap), ax=axes[0], location="bottom",
         fraction=0.05, pad=0.08, aspect=40,
@@ -273,6 +275,7 @@ def pairwise(
         fontsize=8,
     )
     offset.ax.tick_params(labelsize=7)
+    label_ratios(offset, fontsize=6)
 
     events = len(set(data[store.EVENT]))
     pairs = len(set(zip(data[store.EVENT], data["station"])))

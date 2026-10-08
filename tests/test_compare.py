@@ -144,15 +144,15 @@ class TestMeasures:
 
 
 class TestResiduals:
-    def test_the_sign_is_simulation_over_observation(self, con):
-        """The repo's convention, the opposite of the literature's. A positive
-        residual is the simulation running high."""
+    def test_the_sign_is_observation_over_simulation(self, con):
+        """The literature's convention. A positive residual is the simulation
+        running low."""
         found = store.select_runs(con)
         data = store.read_residuals(con, found, "PGA", "rotd50")
         one = 0
         row = con.execute(
             """
-            SELECT ln(s.PGA / o.PGA)
+            SELECT ln(o.PGA / s.PGA)
             FROM runs r
             JOIN runs ro ON ro.kind = 'observed' AND ro.event = r.event
             JOIN scalars s ON s.run_id = r.run_id AND s.component = 'rotd50'

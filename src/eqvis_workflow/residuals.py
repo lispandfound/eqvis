@@ -258,7 +258,7 @@ def residual_map(
             if found_at is not None:
                 simulated[position] = float(array.values[found_at])
         with np.errstate(invalid="ignore", divide="ignore"):
-            residual = np.log(simulated) - np.log(observed["value"])
+            residual = np.log(observed["value"]) - np.log(simulated)
         panels.append(
             {
                 "name": store.cell_label(by, key),

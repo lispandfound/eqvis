@@ -64,7 +64,7 @@ from .geography import (
 )
 from .maps import draw_detail_inset
 from .picks import TITLE_SECTION, read_pick_list, write_pick_list
-from .raster import discrete_norm, fixed_symmetric_norm, rasterise
+from .raster import discrete_norm, fixed_symmetric_norm, label_ratios, rasterise
 from .stations import (
     cluster_bounds,
     draw_observed,
@@ -251,7 +251,7 @@ def build_base_map(
     residual = None
     if np.isfinite(obs["value"]).any():
         simulated = sample_simulation(lon, lat, values, obs["lon"], obs["lat"])
-        residual = np.log(simulated) - np.log(obs["value"])
+        residual = np.log(obs["value"]) - np.log(simulated)
     _, reached = nearest_stations(lon, lat, obs["lon"], obs["lat"])
 
     domain_shape = (
@@ -295,6 +295,7 @@ def build_base_map(
     residuals.set_label(residual_label(label), fontsize=10)
     residuals.set_ticks(residual_levels)
     residuals.set_ticklabels([f"{b:g}" for b in residual_levels], fontsize=8)
+    label_ratios(residuals, fontsize=7)
 
     colorbar = figure.colorbar(
         mesh, ax=ax, orientation="horizontal", shrink=0.6, pad=0.04, aspect=35
@@ -526,7 +527,7 @@ class StationPicker:
 
     STATION_COLUMNS = (
         ("station", "Station", 76, "w", "text"),
-        ("residual", "ln sim/obs", 76, "e", "number"),
+        ("residual", "ln obs/sim", 76, "e", "number"),
         ("distance", "r_rup", 58, "e", "number"),
         ("vs30", "Vs30", 54, "e", "number"),
         ("snr", "SNR", 48, "e", "number"),

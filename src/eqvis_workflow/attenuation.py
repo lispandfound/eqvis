@@ -476,7 +476,7 @@ def draw_residual_panel(
     run's colour even though they sit at recording sites; zero is agreement.
     """
     ax.axhline(0, color="#6b6b6b", lw=0.8, zorder=2)
-    residuals = [np.log(values) - np.log(obs["value"]) for values in simulated]
+    residuals = [np.log(obs["value"]) - np.log(values) for values in simulated]
     for run, residual in zip(series, residuals):
         ax.scatter(
             obs["distance"],
@@ -716,7 +716,7 @@ def distance(
         # The residual is the y axis, so the simulation cloud has no place here;
         # the colour just echoes the height for continuity with --view broad and
         # the map.
-        residual = np.log(simulated[0]) - np.log(obs["value"])
+        residual = np.log(obs["value"]) - np.log(simulated[0])
         if not np.isfinite(residual).any():
             raise typer.BadParameter(
                 f"{observed} has no observed {im}, so there is no residual to "

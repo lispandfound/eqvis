@@ -68,7 +68,27 @@ FAULT_COLOURS = [
     "#8b4513",  # brown
 ]
 HYPOCENTRE_COLOUR = "yellow"
-CFM_GREY = "#9a9a9a"
+
+# Kilometres per degree of latitude, for sizing an arrow drawn in degrees.
+DEGREE_KM = 111.32
+
+# The CFM is drawn the way the GMT figure this map descends from drew it
+# (te_anau_earthquake/plot_cfm_geometry.py): named black traces carrying strike
+# arrows, rather than the anonymous pale hairlines that came before. A trace
+# nobody can name and whose strike cannot be read is scenery; these values are
+# that script's, in the units matplotlib wants them.
+CFM_COLOUR = "black"
+CFM_WIDTH = 1.2  # GMT "1.2p"
+# GMT "=0.3c+e": a 0.3 cm arrow head, in points.
+CFM_ARROW_HEAD = 0.3 / 2.54 * 72
+# GMT min(6.0, 0.4 * length_km): long enough to read, never longer than the
+# trace it sits on.
+CFM_ARROW_MAX_KM = 6.0
+CFM_ARROW_TRACE_FRACTION = 0.4
+# GMT "7p,Helvetica-Oblique,grey20", anchored 0.35 of the way along the trace.
+CFM_LABEL_COLOUR = "#333333"
+CFM_LABEL_SIZE = 7
+CFM_LABEL_ANCHOR = 0.35
 
 # The rupture is the subject, so its traces are the heaviest ink on the map and
 # everything else sits below the weight of a hairline.
@@ -206,16 +226,22 @@ def draw_strike_arrow(
     length_km: float,
     colour,
     display: Display,
+    width: float = TRACE_WIDTH,
+    head: float | None = None,
+    zorder: int = 6,
 ) -> None:
     """An arrow along strike, centred on the trace's midpoint.
 
     Which way a segment ruptured is not something a line can say, and the
     number beside it says only when. The arrow is drawn in the segment's own
     colour and sits on top of its trace, so it reads as part of the line rather
-    than as another thing on the map.
+    than as another thing on the map. ``width`` is the shaft weight, and
+    ``head`` the head size in points -- by default six times the shaft, so a
+    context trace gets a proportionally smaller arrow than the rupture does
+    rather than the same one in a paler colour.
     """
     lon, lat = midpoint
-    per_degree_lat = 111.32
+    per_degree_lat = DEGREE_KM
     per_degree_lon = per_degree_lat * math.cos(math.radians(lat))
     half = length_km / 2
     dlon = half * math.sin(math.radians(strike)) / per_degree_lon
@@ -229,14 +255,97 @@ def draw_strike_arrow(
             # The head is sized off the shaft rather than off the default
             # font size, so it stays in proportion to the trace it sits on
             # however the figure is scaled.
-            "mutation_scale": display.mark(6 * TRACE_WIDTH),
+            "mutation_scale": display.mark(head if head is not None else 6 * width),
             "color": colour,
-            "linewidth": display.mark(TRACE_WIDTH),
+            "linewidth": display.mark(width),
             "shrinkA": 0,
             "shrinkB": 0,
         },
-        zorder=6,
+        zorder=zorder,
     )
+
+
+def polyline_point_bearing(
+    line: np.ndarray, fraction: float = 0.5
+) -> tuple[tuple[float, float], float]:
+    """A point ``fraction`` of the way along a (lon, lat) polyline, and its bearing.
+
+    Measured by arc length rather than by vertex, since CFM traces are digitised
+    at wildly uneven vertex spacing and the middle *vertex* of one is often
+    nowhere near its middle. Longitude is scaled by the cosine of the latitude
+    so that both the distances and the bearing are measured on the ground and
+    not in degrees, which are not the same length on the two axes.
+
+    Parameters
+    ----------
+    line : np.ndarray
+        An (n, 2) array of (lon, lat) vertices, n >= 2.
+    fraction : float
+        How far along the line to land, from 0 at the first vertex to 1 at the
+        last.
+
+    Returns
+    -------
+    tuple[tuple[float, float], float]
+        The (lon, lat) point, and the bearing of the segment it falls in, in
+        degrees clockwise from north.
+    """
+    scale = math.cos(math.radians(float(line[:, 1].mean())))
+    steps = np.diff(np.column_stack([line[:, 0] * scale, line[:, 1]]), axis=0)
+    lengths = np.hypot(steps[:, 0], steps[:, 1])
+    if not lengths.sum():
+        return (float(line[0, 0]), float(line[0, 1])), 0.0
+    walked = np.concatenate([[0.0], np.cumsum(lengths)])
+    target = walked[-1] * fraction
+    index = min(int(np.searchsorted(walked, target, side="right")) - 1, len(steps) - 1)
+    index = max(index, 0)
+    along = (target - walked[index]) / lengths[index]
+    point = line[index] + along * (line[index + 1] - line[index])
+    bearing = math.degrees(math.atan2(steps[index, 0], steps[index, 1])) % 360
+    return (float(point[0]), float(point[1])), bearing
+
+
+def orient_to_strike(bearing: float, dip_direction: float) -> float:
+    """``bearing`` or its reverse, whichever dips to its right.
+
+    A CFM trace is a line in a shapefile, and the order its vertices happen to
+    be stored in carries no convention -- so the direction along it has to be
+    recovered from the fault's own dip direction, under the right-hand rule the
+    nodal planes are quoted in: strike is the sense that leaves the dip 90
+    degrees clockwise of it.
+    """
+    error = ((dip_direction - (bearing + 90)) + 180) % 360 - 180
+    return bearing % 360 if abs(error) <= 90 else (bearing + 180) % 360
+
+
+def visible_polyline(trace: shapely.LineString, window: shapely.Polygon) -> np.ndarray:
+    """The longest run of ``trace`` inside ``window``, as (lon, lat) vertices.
+
+    A CFM trace is kept if it so much as clips the corner of the map, and its
+    own midpoint is then often nowhere the reader can see -- off the top of the
+    frame, where a name anchored to it lands in the title. So the name, the
+    arrow and the length test are all taken from the part that is on the map.
+    The longest run, not all of them, because a trace that leaves the frame and
+    comes back is two lines to the reader and naming both says nothing twice.
+
+    Returns an empty array for a trace that meets the window only at a point.
+    """
+    inside = trace.intersection(window)
+    parts = [
+        part
+        for part in shapely.get_parts(shapely.line_merge(inside))
+        if isinstance(part, shapely.LineString) and not part.is_empty
+    ]
+    if not parts:
+        return np.empty((0, 2))
+    return np.array(max(parts, key=lambda part: part.length).coords)
+
+
+def polyline_length_km(line: np.ndarray) -> float:
+    """The ground length of a (lon, lat) polyline, in kilometres."""
+    scale = math.cos(math.radians(float(line[:, 1].mean())))
+    steps = np.diff(np.column_stack([line[:, 0] * scale, line[:, 1]]), axis=0)
+    return float(np.hypot(steps[:, 0], steps[:, 1]).sum() * DEGREE_KM)
 
 
 def legend_handles(
@@ -297,8 +406,8 @@ def legend_handles(
     if show_cfm:
         handles.append(
             (
-                Line2D([], [], color=CFM_GREY, lw=display.mark(CONTEXT_WIDTH)),
-                "NZ CFM v1.0 trace",
+                Line2D([], [], color=CFM_COLOUR, lw=display.mark(CFM_WIDTH)),
+                "NZ CFM v1.0 trace (arrow = strike)",
             )
         )
     return handles
@@ -333,9 +442,16 @@ def rupture_map(
         bool,
         typer.Option(
             "--strike-arrows/--no-strike-arrows",
-            help="Draw a strike-direction arrow on each segment",
+            help="Draw a strike-direction arrow on each segment and CFM trace",
         ),
     ] = True,
+    cfm_labels: Annotated[
+        bool,
+        typer.Option("--cfm-labels/--no-cfm-labels", help="Name the CFM traces"),
+    ] = True,
+    cfm_label_min_km: Annotated[
+        float, typer.Option(help="Only name CFM traces at least this long")
+    ] = 18.0,
     inset: Annotated[
         bool,
         typer.Option("--inset/--no-inset", help="Draw a New Zealand locator inset"),
@@ -428,20 +544,79 @@ def rupture_map(
     if coast is not None:
         fill_land(ax, coast, bounds, display)
 
-    # Regional context: every CFM trace intersecting the map, drawn thin and pale.
+    # Regional context: every CFM trace intersecting the map, drawn the way the
+    # GMT figure drew it -- black, named, and pointed along strike. Without the
+    # arrow a trace is an undirected line, and the question the map is usually
+    # being read for -- whether the rupture strikes with the fabric around it or
+    # against it -- cannot be answered, since a strike and its reverse look
+    # identical. Without the name the trends are not attributable to anything.
+    entries = []
     if cfm:
         traces = community_fault_model.community_fault_model_as_geodataframe().to_crs(
             "EPSG:4326"
         )
         window = shapely.box(*bounds)
-        for _, fault_trace in traces[traces.intersects(window)].iterrows():
-            line = np.array(fault_trace.trace.coords)
+        undirected = 0
+        for name, fault_trace in traces[traces.intersects(window)].iterrows():
+            drawn_line = np.array(fault_trace.trace.coords)
             ax.plot(
-                line[:, 0],
-                line[:, 1],
-                color=CFM_GREY,
-                lw=display.mark(CONTEXT_WIDTH),
+                drawn_line[:, 0],
+                drawn_line[:, 1],
+                color=CFM_COLOUR,
+                lw=display.mark(CFM_WIDTH),
                 zorder=2,
+            )
+            # Drawn in full and clipped by the axes, but named and pointed off
+            # the visible part.
+            line = visible_polyline(fault_trace.trace, window)
+            if len(line) < 2:
+                continue
+            length_km = polyline_length_km(line)
+
+            # Only the longer traces are named. A map of the short ones is a map
+            # of labels, and the trends worth attributing are carried by the
+            # long traces anyway.
+            if cfm_labels and length_km >= cfm_label_min_km:
+                anchor, _ = polyline_point_bearing(line, CFM_LABEL_ANCHOR)
+                entries.append(
+                    {
+                        "text": str(name),
+                        "x": anchor[0],
+                        "y": anchor[1],
+                        "colour": CFM_LABEL_COLOUR,
+                        # Behind the rupture's own labels: the fabric gives way
+                        # to the subject when the two want the same space.
+                        "rank": 1,
+                        "size": CFM_LABEL_SIZE,
+                        "style": "italic",
+                    }
+                )
+
+            if not strike_arrows:
+                continue
+            # A vertical fault has no dip direction to orient it, and the CFM
+            # leaves the field empty for those. Guessing one would be exactly
+            # the arbitrary arrow this is drawn to avoid, so those traces stay
+            # undirected and the count is reported.
+            if fault_trace.dip_dir is None:
+                undirected += 1
+                continue
+            midpoint, bearing = polyline_point_bearing(line)
+            draw_strike_arrow(
+                ax,
+                midpoint,
+                orient_to_strike(bearing, fault_trace.dip_dir.value),
+                min(CFM_ARROW_MAX_KM, CFM_ARROW_TRACE_FRACTION * length_km),
+                CFM_COLOUR,
+                display,
+                width=CFM_WIDTH,
+                head=CFM_ARROW_HEAD,
+                zorder=2,
+            )
+        if undirected:
+            console_warn(
+                f"{undirected} CFM trace(s) drawn without a strike arrow: "
+                "the model gives them no dip direction to orient one by"
             )
 
     # Surface projections first, so the traces and labels sit on top of every fill.
@@ -460,7 +635,6 @@ def rupture_map(
                 )
             )
 
-    entries = []
     for index, name in enumerate(order):
         fault = faults[name]
         colour = colours[name]
@@ -580,7 +754,7 @@ def rupture_map(
     loc, anchor = corner_anchor(
         free_corner(ax, drawn[:, 0], drawn[:, 1], size=0.30, taken=taken)
     )
-    ax.legend(
+    legend = ax.legend(
         [handle for handle, _ in handles],
         [label for _, label in handles],
         loc=loc,
@@ -591,16 +765,22 @@ def rupture_map(
         borderpad=0.6,
         labelspacing=0.6,
         handlelength=1.8,
-    ).set_zorder(9)
+    )
+    legend.set_zorder(9)
 
+    locator = None
     if inset:
         # Drawn after the legend has claimed its corner, so the two never land
         # on top of each other -- a hidden locator is worse than none.
-        draw_locator_map(ax.inset_axes(list(inset_rect)), coast, bounds, display)
+        locator = ax.inset_axes(list(inset_rect))
+        draw_locator_map(locator, coast, bounds, display)
 
-    # Last, so the numbers are placed against the final axes size and dodge
-    # each other the way station and basin labels do on the other maps.
-    place_labels(fig, ax, entries)
+    # Last, so the numbers and the CFM names are placed against the final axes
+    # size and dodge each other the way station and basin labels do on the
+    # other maps -- and dodge the two boxes already sitting on the map.
+    place_labels(
+        fig, ax, entries, avoid=[a for a in (legend, locator) if a is not None]
+    )
 
     print(f"rupture order: {' -> '.join(order)}")
     print(

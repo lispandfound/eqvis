@@ -1,10 +1,10 @@
 """``bias``: the log residual against recordings, swept across the spectrum.
 
-At each pSA period the residual is averaged over the stations, so a run that
-runs low at long period shows as a curve below zero there; the band is the
-confidence interval on that mean. With two runs a panel below differences them
+At each pSA period the residual ln(obs/sim) is averaged over the stations, so
+a run that runs low at long period shows as a curve above zero there; the band
+is +/-1 standard deviation of the station sample about that mean. With two runs a panel below differences them
 station by station, which is where a real difference between the runs shows up
--- their own intervals overlap almost everywhere, because most of that width is
+-- their own bands overlap almost everywhere, because most of that width is
 site scatter common to both and only the pairing cancels it::
 
     eqvis bias sw4/im.h5 --observed flatfiles.zip --diff emod3d/im.h5 \\
@@ -70,12 +70,28 @@ def match_columns(
     return matched
 
 
+def model_residual(predicted: np.ndarray, recorded: np.ndarray) -> np.ndarray:
+    """``ln(recording / model)``: the orientation every series on the panel shares.
+
+    Both a simulation and an empirical model are *predictions* here, and the
+    axis is :func:`eqvis_workflow.data.residual_label` -- ``ln(obs/sim)``, a
+    curve above zero meaning the prediction runs low. The two therefore have
+    to be differenced the same way round, which is the whole reason this is a
+    named function rather than a subtraction written out twice: the empirical
+    branch was once the other way round, which drew the one curve a reader
+    consults to decide whether the simulation beats the model upside down.
+
+    Both arguments are already in log space.
+    """
+    return recorded - predicted
+
+
 def bias_statistics(residual: np.ndarray) -> dict[str, np.ndarray]:
     """Per-period mean, spread and count over the stations of a residual table.
 
     ``sd`` is how much the misfit varies from station to station and ``se`` how
     well the mean itself is pinned down; they answer different questions and the
-    plot shows both, since a large bias over three stations is not the same
+    output reports both, since a large bias over three stations is not the same
     finding as the same bias over thirty.
     """
     known = np.isfinite(residual)
@@ -86,6 +102,56 @@ def bias_statistics(residual: np.ndarray) -> dict[str, np.ndarray]:
         spread = np.where(known, (residual - mean) ** 2, 0.0).sum(axis=0)
         sd = np.where(count > 1, np.sqrt(spread / np.maximum(count - 1, 1)), np.nan)
     return {"count": count, "mean": mean, "sd": sd, "se": sd / np.sqrt(count)}
+
+
+def write_bias_table(
+    path: Path,
+    periods: np.ndarray,
+    series: list[dict],
+    paired: dict | None,
+    paired_name: str | None,
+    interval: float,
+) -> None:
+    """The curves as numbers: one row per series per period.
+
+    The figure is read off a log axis by eye, which is enough to see a shape and
+    not enough to quote. Anything written down from one -- a bias at a period, a
+    band a run beats the empirical model over -- should come from the same
+    arithmetic the curve was drawn from rather than from a reading of the
+    drawing, so the sweep can put its own numbers on the page.
+
+    ``half`` is the half-width of the confidence interval on the mean, so a
+    series is resolved at a period where ``abs(mean) > half``.
+    """
+    rows = [
+        (entry["name"], period, index)
+        for entry in series
+        for index, period in enumerate(periods)
+    ]
+    with path.open("w") as handle:
+        handle.write("series,ordinate,mean,sd,se,half,count,resolved\n")
+        for name, period, index in rows:
+            stats = next(e["stats"] for e in series if e["name"] == name)
+            half = interval_half_width(stats, interval)[index]
+            mean = stats["mean"][index]
+            resolved = bool(np.isfinite(half) and abs(mean) > half)
+            handle.write(
+                f"{name},{period:.6g},{mean:.6f},{stats['sd'][index]:.6f},"
+                f"{stats['se'][index]:.6f},{half:.6f},"
+                f"{int(stats['count'][index])},{resolved}\n"
+            )
+        if paired is not None:
+            half = interval_half_width(paired["stats"], interval)
+            for index, period in enumerate(periods):
+                mean = paired["stats"]["mean"][index]
+                resolved = bool(np.isfinite(half[index]) and abs(mean) > half[index])
+                handle.write(
+                    f"{paired_name},{period:.6g},{mean:.6f},"
+                    f"{paired['stats']['sd'][index]:.6f},"
+                    f"{paired['stats']['se'][index]:.6f},{half[index]:.6f},"
+                    f"{int(paired['stats']['count'][index])},{resolved}\n"
+                )
+    print(f"wrote {path}")
 
 
 def interval_half_width(stats: dict[str, np.ndarray], interval: float) -> np.ndarray:
@@ -100,28 +166,21 @@ def draw_bias_curve(
     stats: dict[str, np.ndarray],
     colour: str,
     style: str,
-    interval: float,
     display: Display | None = None,
 ) -> None:
-    """One series' bias against period: the mean and the interval on it.
+    """One series' bias against period: the mean and +/-1 sigma of the sample.
 
-    The band is the confidence interval of the mean itself, so zero falling
-    outside it is the claim that the run really is biased at that period. It is
-    the only thing shaded here -- how far individual stations scatter about the
-    mean is a different question, and shading both at once turned three series
-    into six overlapping washes that hid the curves they described. The scatter
-    gets its own panel, as lines.
-
-    The interval is Student's rather than normal: at long period only a handful
-    of records are still usable, and over three stations the normal interval is
-    less than half the width it should be.
+    The band is the standard deviation of the residual between stations, not
+    an interval on the mean: it shows how far an individual station's misfit
+    typically sits from the mean, which is the spread a reader compares
+    against. Whether the mean itself is resolved is in ``--table`` (``half``
+    and ``resolved``), and whether two runs differ is the paired panel below.
     """
     display = display or NATURAL
-    half = interval_half_width(stats, interval)
     ax.fill_between(
         periods,
-        stats["mean"] - half,
-        stats["mean"] + half,
+        stats["mean"] - stats["sd"],
+        stats["mean"] + stats["sd"],
         color=colour,
         alpha=0.22,
         lw=0,
@@ -147,9 +206,9 @@ def draw_difference_panel(
 ) -> None:
     """Whether the two runs really differ, period by period.
 
-    Reading that off the panel above -- do the two intervals overlap? -- is the
+    Reading that off the panel above -- do the two bands overlap? -- is the
     wrong test and a badly conservative one: both runs are scored at the same
-    stations, so most of the width of those intervals is site-to-site
+    stations, so most of the width of those bands is site-to-site
     variability common to both, which cancels when the runs are differenced
     station by station. What is plotted here is that paired difference, whose
     mean is exactly the gap between the two curves above but whose interval is
@@ -284,7 +343,10 @@ def bias(
     ] = None,
     interval: Annotated[
         float,
-        typer.Option(help="Confidence level for the interval on the mean, 0-1"),
+        typer.Option(
+            help="Confidence level for the interval on the paired difference "
+            "and --table's mean, 0-1; the bias bands are always +/-1 sigma"
+        ),
     ] = 0.95,
     minimum: Annotated[
         int,
@@ -316,6 +378,14 @@ def bias(
             "--output", "-o", help="Output image path (omit to show interactively)"
         ),
     ] = None,
+    table: Annotated[
+        Path | None,
+        typer.Option(
+            "--table",
+            help="Also write the curves as CSV: one row per series per ordinate, "
+            "so a number quoted from this figure is the figure's own",
+        ),
+    ] = None,
     display_height: Annotated[
         float | None,
         typer.Option(
@@ -337,10 +407,10 @@ def bias(
     """Plot the bias of one or two simulations against recordings, swept across a spectrum.
 
     The single number a distance plot gives at one period or frequency, swept
-    across the whole spectrum: at each point the log residual ln(sim/obs) is
+    across the whole spectrum: at each point the log residual ln(obs/sim) is
     averaged over every station that recorded, so a run that is systematically
     low at long period (pSA) or low frequency (FAS) shows up as a curve sitting
-    below zero there rather than as a cloud that has to be read one point at a
+    above zero there rather than as a cloud that has to be read one point at a
     time. ``im`` is pSA (period, s) or FAS (frequency, Hz); FAS carries no
     empirical predictions, so ``--empirical`` only applies to pSA.
 
@@ -478,7 +548,7 @@ def bias(
                 )
         simulated = match_columns(run["da"].values[nearest], run["periods"], periods)
         simulated[~reached] = np.nan
-        residual = np.log(simulated) - recorded
+        residual = model_residual(np.log(simulated), recorded)
         series.append(
             {
                 "name": run["name"],
@@ -503,7 +573,7 @@ def bias(
                 "name": empirical,
                 "colour": EMPIRICAL_BLUE,
                 "style": "--",
-                "stats": bias_statistics(recorded - predicted),
+                "stats": bias_statistics(model_residual(predicted, recorded)),
             }
     # Paired station by station, so everything the two runs have in common --
     # the site, the path, the recording itself -- cancels instead of being
@@ -529,6 +599,16 @@ def bias(
     periods = periods[scored]
     for entry in series + ([paired] if paired is not None else []):
         entry["stats"] = {key: value[scored] for key, value in entry["stats"].items()}
+
+    if table is not None:
+        write_bias_table(
+            table,
+            periods,
+            series,
+            paired,
+            f"{series[0]['name']} - {series[1]['name']}" if paired else None,
+            interval,
+        )
 
     # One question per panel: where each series sits, whether the two runs
     # really differ, how much their stations disagree, and how much there was to
@@ -568,10 +648,9 @@ def bias(
             entry["stats"],
             entry["colour"],
             entry["style"],
-            interval,
             display,
         )
-    ax.set_ylabel(residual_label(im) if display.detailed else "ln[sim / obs]")
+    ax.set_ylabel(residual_label(im) if display.detailed else "ln[obs / sim]")
     ax.set_xscale("log")
 
     handles = [
@@ -587,8 +666,8 @@ def bias(
     ]
     if display.detailed:
         # Enlarged, this entry is the longest line in the legend and the one
-        # a caption can carry instead: the shading is the interval, and which
-        # interval it is has to be said in the caption at that size anyway.
+        # a caption can carry instead: the shading is the spread, and which
+        # spread it is has to be said in the caption at that size anyway.
         handles.append(
             plt.Rectangle(
                 (0, 0),
@@ -597,7 +676,7 @@ def bias(
                 fc="#6b6b6b",
                 alpha=0.22,
                 lw=0,
-                label=f"{interval:.0%} interval on the mean",
+                label="±1σ between stations",
             )
         )
     ax.legend(
