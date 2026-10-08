@@ -43,10 +43,15 @@ from .data import (
 from .display import Display
 from .flatfile import read_observed
 from .geography import (
+    attrs_cross_antimeridian,
     basins_in_view,
+    degrees_label,
     draw_basins,
     draw_coastline,
     draw_geometry,
+    eastward,
+    eastward_attrs,
+    eastward_geometry,
     load_basins,
     load_coastline,
 )
@@ -334,7 +339,16 @@ def map_im(
 
     lon = da.longitude.values
     lat = da.latitude.values
+    attrs = tree.attrs
     coast = load_coastline(coastline) if clip else None
+    # A domain across the 180th meridian is drawn on [0, 360), everything on
+    # the map moved there with it, or its stations would span the globe.
+    wrap = attrs_cross_antimeridian(lon, attrs)
+    if wrap:
+        lon = eastward(lon)
+        attrs = eastward_attrs(attrs)
+        if coast is not None:
+            coast = eastward_geometry(coast)
     grid_lon, grid_lat, grid = rasterise(lon, lat, values, coast)
     norm = BoundaryNorm(boundaries, colormap.N, extend="both")
 
@@ -351,7 +365,7 @@ def map_im(
             (grid_lon.min(), grid_lat.min(), grid_lon.max(), grid_lat.max()),
             display,
         )
-    draw_geometry(ax, tree.attrs, display)
+    draw_geometry(ax, attrs, display)
 
     picked = read_pick_list(stations) if stations is not None else None
     obs = residual = named = None
@@ -359,7 +373,9 @@ def map_im(
         obs, resolved = read_observed(observed, im, component, selection)
         for dim, value in resolved.items():
             print(f"observed {dim}: {value:g}")
-        obs = restrict_to_domain(obs, tree.attrs, grid_lon, grid_lat, observed)
+        if wrap:
+            obs["lon"] = eastward(obs["lon"])
+        obs = restrict_to_domain(obs, attrs, grid_lon, grid_lat, observed)
         if picked is not None:
             obs = restrict_to_stations(obs, list(picked["stations"]), observed)
         named = named_mask(obs["name"], None if picked is None else picked["stations"])
@@ -369,7 +385,7 @@ def map_im(
 
     view = (grid_lon.min(), grid_lat.min(), grid_lon.max(), grid_lat.max())
     domain_shape = (
-        shapely.from_wkt(tree.attrs["domain"]) if tree.attrs.get("domain") else None
+        shapely.from_wkt(attrs["domain"]) if attrs.get("domain") else None
     )
     basin_entries, outlines = [], None
     if basins:
@@ -379,6 +395,8 @@ def map_im(
         ax.set_xlim(ax.get_xlim())
         ax.set_ylim(ax.get_ylim())
         outlines = load_basins(basin_file)
+        if outlines and wrap:
+            outlines = [(name, eastward_geometry(shape)) for name, shape in outlines]
         if outlines:
             outlines = basins_in_view(outlines, view)
             # Confine the outlines to the simulated area, and thin them to what
@@ -417,7 +435,9 @@ def map_im(
 
     ax.set_aspect(1 / np.cos(np.radians(lat.mean())))
     degrees = FuncFormatter(lambda v, _: f"{v:g}°")
-    ax.xaxis.set_major_formatter(degrees)
+    ax.xaxis.set_major_formatter(
+        FuncFormatter(lambda v, _: degrees_label(v)) if wrap else degrees
+    )
     ax.yaxis.set_major_formatter(degrees)
     ax.tick_params(labelsize=9)
     if display.scale > 1.0:

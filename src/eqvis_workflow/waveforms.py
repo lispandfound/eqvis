@@ -50,27 +50,41 @@ def read_simulated_waveform(
     if station not in set(bb.station.values):
         raise typer.BadParameter(f"{station!r} is not a station in {path}")
     traces = bb.waveform.sel(station=station)
+    # Older broadband files name the components x/y/z; current ones by their
+    # orientation, 000/090/ver, which is the suffix each x/y/z maps to.
+    present = set(traces.component.values)
     return bb.time.values - lag, {
-        component: traces.sel(component=component).values
-        for component in WAVEFORM_COMPONENTS
+        component: traces.sel(
+            component=component if component in present else suffix
+        ).values
+        for component, suffix in WAVEFORM_COMPONENTS.items()
     }
 
 
 def read_observed_waveform(
     archive: Path, station: str
 ) -> tuple[np.ndarray, dict[str, np.ndarray]] | None:
-    """Acceleration traces (g) for one station from a GeoNet waveform zip.
+    """Acceleration traces (g) for one station from a GeoNet or NZGMDB waveform zip.
 
-    Returns None when the station was not recorded. Stations with more than one
-    instrument keep the first record in sorted order, which is named so the
-    caller can say which one it drew.
+    GeoNet keeps each station's records under ``<station>/``; NZGMDB under
+    ``waveforms/<year>/<event>/processed/<event>_<station>_<channel>.<component>``.
+    Both hold the same text format. Returns None when the station was not
+    recorded. Stations with more than one instrument keep the first record in
+    sorted order, which is named so the caller can say which one it drew.
     """
+
+    def recorded_here(name: str) -> bool:
+        if name.startswith(f"{station}/"):
+            return True
+        parts = Path(name).name.split("_")
+        return "/processed/" in name and len(parts) >= 3 and parts[1] == station
+
     with zipfile.ZipFile(archive) as zf:
         prefixes = sorted(
             {
                 name.rsplit(".", 1)[0]
                 for name in zf.namelist()
-                if name.startswith(f"{station}/")
+                if recorded_here(name)
                 and name.rsplit(".", 1)[-1] in set(WAVEFORM_COMPONENTS.values())
             }
         )

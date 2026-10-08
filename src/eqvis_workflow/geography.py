@@ -270,21 +270,79 @@ def land_mask(
     return ~on_land.reshape(mesh_lon.shape)
 
 
+def crosses_antimeridian(lon: np.ndarray) -> bool:
+    """Whether longitudes in [-180, 180) straddle the 180th meridian.
+
+    A domain off East Cape or around the Chathams has stations on both sides
+    of it, which read as a span of nearly 360 degrees rather than a few.
+    """
+    lon = np.asarray(lon)
+    return lon.size > 0 and bool(np.ptp(lon) > 180)
+
+
+def attrs_cross_antimeridian(lon: np.ndarray, attrs: dict) -> bool:
+    """Whether the stations, domain, source and hypocentre together straddle 180.
+
+    Stations sit on land, so off East Cape they can all be on one side while
+    the domain, the fault and the hypocentre run over to the other.
+    """
+    parts = [np.asarray(lon, dtype=float).ravel()]
+    for key in ("domain", "source"):
+        if attrs.get(key):
+            parts.append(shapely.get_coordinates(shapely.from_wkt(attrs[key]))[:, 0])
+    if "hypo_lon" in attrs:
+        parts.append(np.array([float(attrs["hypo_lon"])]))
+    return crosses_antimeridian(np.concatenate(parts))
+
+
+def eastward(lon: np.ndarray) -> np.ndarray:
+    """Longitudes on [0, 360), so a domain across the 180th meridian is contiguous."""
+    lon = np.asarray(lon, dtype=float)
+    return np.where(lon < 0, lon + 360, lon)
+
+
+def eastward_geometry[G: shapely.Geometry](geometry: G) -> G:
+    """A geometry with its western-hemisphere vertices moved to [180, 360)."""
+    return shapely.transform(
+        geometry, lambda xy: np.where(xy[:, :1] < 0, xy + [360.0, 0.0], xy)
+    )
+
+
+def eastward_attrs(attrs: dict) -> dict:
+    """An IM file's root attributes with the domain, source and hypocentre eastward."""
+    shifted = dict(attrs)
+    for key in ("domain", "source"):
+        if shifted.get(key):
+            geometry = eastward_geometry(shapely.from_wkt(shifted[key]))
+            shifted[key] = shapely.to_wkt(geometry)
+    if "hypo_lon" in shifted:
+        shifted["hypo_lon"] = float(eastward(float(shifted["hypo_lon"])))
+    return shifted
+
+
+def degrees_label(value: float) -> str:
+    """A longitude tick on [0, 360) written back on [-180, 180)."""
+    return f"{value - 360 if value > 180 else value:g}°"
+
+
 def draw_coastline(
     ax: plt.Axes,
     coastline: shapely.MultiPolygon,
     bounds: tuple[float, float, float, float],
     display: Display | None = None,
 ) -> None:
-    """Outline the coastline (clipped to the plot bounds) in a soft grey."""
+    """Outline the coastline (clipped to the plot bounds) in a soft grey.
+
+    The shoreline is clipped rather than the land: land cut by the bounds
+    would otherwise be outlined along the cut too, drawing the box as coast.
+    """
     display = display or NATURAL
-    local = shapely.intersection(coastline, shapely.box(*bounds))
-    for poly in shapely.get_parts(local):
-        if poly.geom_type != "Polygon" or poly.is_empty:
+    local = shapely.intersection(shapely.boundary(coastline), shapely.box(*bounds))
+    for line in shapely.get_parts(shapely.line_merge(local)):
+        if line.is_empty or line.geom_type not in ("LineString", "LinearRing"):
             continue
-        for ring in [poly.exterior, *poly.interiors]:
-            x, y = ring.xy
-            ax.plot(x, y, color="#6b6b6b", lw=display.mark(0.5), zorder=3)
+        x, y = line.xy
+        ax.plot(x, y, color="#6b6b6b", lw=display.mark(0.5), zorder=3)
 
 
 def draw_geometry(
